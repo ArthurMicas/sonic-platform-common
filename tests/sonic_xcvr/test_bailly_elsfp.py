@@ -166,13 +166,6 @@ class TestBaillyElsfpApi:
         assert api.get_module_state() == state
         assert api.get_elsfp_status()["module_state"] == state
 
-    def test_set_lpmode_updates_only_control_bit(self, api, eeprom):
-        eeprom.put(CONTROL_PAGE, 132, "B", 0xF0)
-        assert api.set_lpmode(True)
-        assert eeprom.byte(CONTROL_PAGE, 132) == 0xF1
-        assert api.set_lpmode(False)
-        assert eeprom.byte(CONTROL_PAGE, 132) == 0xF0
-
     def test_lane_enable_and_state(self, api, eeprom):
         eeprom.put(CONTROL_PAGE, 133, "B", 0b00000101)   # lasers 0 and 2 disabled
         eeprom.put(CONTROL_PAGE, 135, "B", 0b11111010)   # lasers 0 and 2 inactive
@@ -185,37 +178,22 @@ class TestBaillyElsfpApi:
         assert status["enable_lane2"] is True
         assert status["state_lane3"] == "Inactive"
 
-    def test_set_per_lane_enable_updates_selected_lasers(self, api, eeprom):
-        eeprom.put(CONTROL_PAGE, 133, "B", 0b00000001)
-        assert api.set_per_lane_enable(0b11110000, False)
-        assert eeprom.byte(CONTROL_PAGE, 133) == 0b11110001
-        assert api.set_per_lane_enable(0b00110001, True)
-        assert eeprom.byte(CONTROL_PAGE, 133) == 0b11000000
-        assert {offset for offset, _ in eeprom.writes} == {addr(CONTROL_PAGE, 133)}
-
-    def test_set_per_lane_enable_upper_lasers(self, api, eeprom):
-        program_rlm(eeprom, laser_count=16)
-        assert api.set_per_lane_enable(0x0300, False)
-        assert eeprom.byte(CONTROL_PAGE, 133) == 0
-        assert eeprom.byte(CONTROL_PAGE, 134) == 0b11
-        assert {offset for offset, _ in eeprom.writes} == {addr(CONTROL_PAGE, 134)}
-
-    def test_set_per_lane_enable_rejects_lasers_beyond_count(self, api, eeprom):
-        with pytest.raises(ValueError):
-            api.set_per_lane_enable(0x100, False)
-        assert eeprom.writes == []
-
     def test_read_failures(self, api, eeprom):
         eeprom.fail_reads = True
         assert api.get_elsfp_info() is None
         assert api.get_elsfp_dom_real_value() is None
         assert api.get_elsfp_threshold_info() is None
         assert api.get_elsfp_status() is None
-        assert api.set_lpmode(True) is False
-        assert api.set_per_lane_enable(0x1, False) is False
         assert eeprom.writes == []
 
-    def test_reset_is_not_supported(self, api, eeprom):
+    @pytest.mark.parametrize("control", [
+        lambda api: api.reset(),
+        lambda api: api.set_lpmode(True),
+        lambda api: api.set_lpmode(False),
+        lambda api: api.set_per_lane_enable(0x1, False),
+        lambda api: api.set_per_lane_enable(0xFF, True),
+    ])
+    def test_controls_are_not_supported(self, api, eeprom, control):
         with pytest.raises(NotImplementedError):
-            api.reset()
+            control(api)
         assert eeprom.writes == []

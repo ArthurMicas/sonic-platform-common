@@ -6,8 +6,9 @@
     offset by the ELS base page; see BaillyElsfpMemMap.
 
     Only the public ELSFP methods backed by RLM registers are implemented.
-    Bailly does not provide a reset control, so reset() keeps the
-    NotImplementedError behavior of ElsfpApi.
+    The ELS controls (reset, low-power mode and laser enable) raise
+    NotImplementedError: Bailly has no reset register, and its low-power and
+    laser disable registers do not act on host writes.
 """
 import copy
 
@@ -209,15 +210,12 @@ class BaillyElsfpApi(ElsfpApi):
             return MODULE_STATE_READY
         return "Unknown"
 
+    # On M2-W6940 hardware, host writes to the RLM module low-power control,
+    # laser disable and laser power mode registers are accepted but neither
+    # stored nor applied, so the RLM controls are not available through them.
+
     def set_lpmode(self, low_power: bool) -> bool:
-        field = self.xcvr_eeprom.mem_map.get_field(bailly.MODULE_LOW_POWER_CONTROL)
-        offset = field.get_offset()
-        current = self.xcvr_eeprom.read_raw(offset, 1)
-        if current is None:
-            return False
-        mask = field.get_bitmask()
-        value = current | mask if low_power else current & ~mask
-        return self.xcvr_eeprom.write_raw(offset, 1, bytearray([value & 0xFF]))
+        raise NotImplementedError("Bailly ELS low-power control is not available through the RLM registers")
 
     def get_per_lane_enable(self) -> list:
         count = self.get_lane_count()
@@ -228,37 +226,7 @@ class BaillyElsfpApi(ElsfpApi):
         return [0 if (disabled >> laser) & 1 else 1 for laser in range(count)]
 
     def set_per_lane_enable(self, lane_mask: int, enabled: bool) -> bool:
-        """
-        Enable or disable RLM lasers.
-
-        Args:
-            lane_mask: Bitmask of lasers to update (bit 0 = laser 0).
-            enabled:   True to enable the lasers, False to disable them.
-
-        Raises:
-            ValueError: If lane_mask selects a laser beyond the laser count.
-        """
-        count = self.get_lane_count()
-        if count is None:
-            return False
-        if lane_mask & ~((1 << count) - 1):
-            raise ValueError("lane_mask 0x%X selects lasers outside the %d-laser range" % (lane_mask, count))
-
-        disabled = self._read_laser_bits(bailly.LASER_DISABLE_CONTROL_7_0,
-                                         bailly.LASER_DISABLE_CONTROL_15_8)
-        if disabled is None:
-            return False
-        if enabled:
-            disabled &= ~lane_mask
-        else:
-            disabled |= lane_mask
-
-        for field, shift in ((bailly.LASER_DISABLE_CONTROL_7_0, 0),
-                             (bailly.LASER_DISABLE_CONTROL_15_8, 8)):
-            if (lane_mask >> shift) & 0xFF:
-                if not self.xcvr_eeprom.write(field, (disabled >> shift) & 0xFF):
-                    return False
-        return True
+        raise NotImplementedError("Bailly ELS laser enable control is not available through the RLM registers")
 
     def get_per_lane_state(self) -> dict:
         count = self.get_lane_count()
