@@ -80,41 +80,46 @@ class CpoBase(device_base.DeviceBase):
         self.elsfp.remove_api()
 
     # Low-power mode and reset apply to the CPO virtual module as a whole, through
-    # its module controller. By default that is the module API returned by
-    # get_xcvr_api(), which xcvrd also uses to provision the module. Platforms
-    # with a different controller model override these methods. A controller may
-    # serve several ports, in which case every port it serves is affected.
+    # its module controller; a controller may serve several ports, in which
+    # case every port it serves is affected. These are platform hooks:
+    # platforms implement them with whatever their hardware provides, such as
+    # dedicated pins or EEPROM controls. Client code that wants the software
+    # path can call the module API from get_xcvr_api() directly.
+    def get_reset_status(self) -> bool:
+        """
+        Retrieves the reset state of the CPO virtual module
 
-    def get_lpmode(self):
+        Returns:
+            A Boolean, True if the module is held in reset, False if not
+        """
+        raise NotImplementedError
+
+    def reset(self) -> bool:
+        """
+        Resets the CPO virtual module
+
+        Returns:
+            A boolean, True if successful, False if not
+        """
+        raise NotImplementedError
+
+    def get_lpmode(self) -> bool:
         """
         Retrieves the low-power mode of the CPO virtual module
 
         Returns:
-            A boolean, True if the module is in low-power mode, False if not,
-            or None if it cannot be determined
+            A Boolean, True if the module is in low-power mode, False if not
         """
-        api = self.get_xcvr_api()
-        return api.get_lpmode() if api is not None else None
+        raise NotImplementedError
 
-    def set_lpmode(self, lpmode):
+    def set_lpmode(self, lpmode: bool) -> bool:
         """
         Puts the CPO virtual module in low-power or full-power mode
 
         Args:
-            lpmode: A boolean, True to enter low-power mode, False to leave it
+            lpmode: A Boolean, True to enter low-power mode, False to leave it
 
         Returns:
             A boolean, True if successful, False if not
         """
-        api = self.get_xcvr_api()
-        return api.set_lpmode(lpmode) if api is not None else False
-
-    def reset(self):
-        """
-        Resets the CPO virtual module, returning its settings to their defaults
-
-        Returns:
-            A boolean, True if successful, False if not
-        """
-        api = self.get_xcvr_api()
-        return api.reset() if api is not None else False
+        raise NotImplementedError

@@ -1,3 +1,4 @@
+import pytest
 from mock import MagicMock
 
 from sonic_platform_base.sonic_xcvr.cpo.cpo_base import CpoBase, CpoHardwareInfo, OeId
@@ -9,8 +10,24 @@ from sonic_platform_base.sonic_xcvr.cpo.elsfp import ElsfpBase
 SOME_OE_ID = OeId.BROADCOM_DAVISSON
 SOME_ELSFP_ID = None
 
+# Low-power mode and reset hooks that the CPO base classes leave to platforms,
+# as (method_name, args).
+PLATFORM_HOOKS = [
+    ("get_reset_status", ()),
+    ("reset", ()),
+    ("get_lpmode", ()),
+    ("set_lpmode", (True,)),
+]
+
 
 class TestOeBase(object):
+    @pytest.mark.parametrize("method_name, args", PLATFORM_HOOKS)
+    def test_platform_hooks_raise(self, method_name, args):
+        oe = OeBase(CpoHardwareInfo(oe_id=SOME_OE_ID, elsfp_id=SOME_ELSFP_ID))
+
+        with pytest.raises(NotImplementedError):
+            getattr(oe, method_name)(*args)
+
     def test_get_api_refreshes_when_none(self):
         oe = OeBase(CpoHardwareInfo(oe_id=SOME_OE_ID, elsfp_id=SOME_ELSFP_ID))
         fake_api = MagicMock()
@@ -35,6 +52,13 @@ class TestOeBase(object):
 
 
 class TestElsfpBase(object):
+    @pytest.mark.parametrize("method_name, args", PLATFORM_HOOKS)
+    def test_platform_hooks_raise(self, method_name, args):
+        elsfp = ElsfpBase(CpoHardwareInfo(oe_id=SOME_OE_ID, elsfp_id=SOME_ELSFP_ID))
+
+        with pytest.raises(NotImplementedError):
+            getattr(elsfp, method_name)(*args)
+
     def test_get_api_refreshes_when_none(self):
         elsfp = ElsfpBase(CpoHardwareInfo(oe_id=SOME_OE_ID, elsfp_id=SOME_ELSFP_ID))
         fake_api = MagicMock()
@@ -81,44 +105,27 @@ class TestCpoBase(object):
         assert cpo.get_xcvr_api() is oe_api
         oe.get_api.assert_called_with()
 
-    def _cpo_with_oe_api(self, oe_api):
+    @pytest.mark.parametrize("method_name, args", PLATFORM_HOOKS)
+    def test_platform_hooks_raise(self, method_name, args):
         hardware_id = CpoHardwareInfo(oe_id=SOME_OE_ID, elsfp_id=SOME_ELSFP_ID)
-        oe = OeBase(hardware_id)
-        elsfp = ElsfpBase(hardware_id)
-        oe.get_api = MagicMock(return_value=oe_api)
+        oe, elsfp = OeBase(hardware_id), ElsfpBase(hardware_id)
+        oe.get_api = MagicMock()
         elsfp.get_api = MagicMock()
-        return CpoBase(hardware_id, oe, elsfp)
+        cpo = CpoBase(hardware_id, oe, elsfp)
 
-    def test_vmodule_controls_use_the_module_api(self):
-        oe_api = MagicMock()
-        oe_api.get_lpmode.return_value = True
-        oe_api.set_lpmode.return_value = True
-        oe_api.reset.return_value = True
-        cpo = self._cpo_with_oe_api(oe_api)
+        with pytest.raises(NotImplementedError):
+            getattr(cpo, method_name)(*args)
+        # The hooks do not fall back to the software path.
+        oe.get_api.assert_not_called()
+        elsfp.get_api.assert_not_called()
 
-        assert cpo.get_lpmode() is True
-        assert cpo.set_lpmode(False) is True
-        assert cpo.reset() is True
-        oe_api.get_lpmode.assert_called_once_with()
-        oe_api.set_lpmode.assert_called_once_with(False)
-        oe_api.reset.assert_called_once_with()
-        # The ELS endpoint is not used for vmodule controls.
-        cpo.elsfp.get_api.assert_not_called()
-
-    def test_vmodule_controls_without_module_api(self):
-        cpo = self._cpo_with_oe_api(None)
-
-        assert cpo.get_lpmode() is None
-        assert cpo.set_lpmode(True) is False
-        assert cpo.reset() is False
-
-    def test_vmodule_controls_can_be_overridden(self):
-        class ControllerCpo(CpoBase):
+    def test_platform_hooks_can_be_implemented(self):
+        class PlatformCpo(CpoBase):
             def set_lpmode(self, lpmode):
-                return "controller"
+                return "platform"
 
         oe_api = MagicMock()
-        cpo = ControllerCpo(None, MagicMock(get_api=MagicMock(return_value=oe_api)), MagicMock())
+        cpo = PlatformCpo(None, MagicMock(get_api=MagicMock(return_value=oe_api)), MagicMock())
 
-        assert cpo.set_lpmode(True) == "controller"
+        assert cpo.set_lpmode(True) == "platform"
         oe_api.set_lpmode.assert_not_called()

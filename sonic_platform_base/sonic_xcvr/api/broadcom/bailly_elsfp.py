@@ -214,8 +214,14 @@ class BaillyElsfpApi(ElsfpApi):
     # laser disable and laser power mode registers are accepted but neither
     # stored nor applied, so the RLM controls are not available through them.
 
+    # The lower memory of the EEPROM belongs to the optical engine, so the
+    # ELSFP API's byte 26 controls would act on the OE, not the ELS.
+
     def set_lpmode(self, low_power: bool) -> bool:
         raise NotImplementedError("Bailly ELS low-power control is not available through the RLM registers")
+
+    def reset(self) -> bool:
+        raise NotImplementedError("Bailly ELS reset is not available: the RLM has no reset register")
 
     def get_per_lane_enable(self) -> list:
         count = self.get_lane_count()
