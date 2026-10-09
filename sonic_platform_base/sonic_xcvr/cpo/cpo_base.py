@@ -79,12 +79,13 @@ class CpoBase(device_base.DeviceBase):
         self.oe.remove_api()
         self.elsfp.remove_api()
 
-    # Low-power mode and reset apply to the CPO virtual module as a whole, through
-    # its module controller; a controller may serve several ports, in which
-    # case every port it serves is affected. These are platform hooks:
-    # platforms implement them with whatever their hardware provides, such as
-    # dedicated pins or EEPROM controls. Client code that wants the software
-    # path can call the module API from get_xcvr_api() directly.
+    # Platform hooks for the CPO virtual module. Low-power mode and reset act
+    # through its module controller; a controller may serve several ports, in
+    # which case every port it serves is affected. Tx-disable acts on the
+    # virtual module's channels. Platforms implement these hooks with whatever
+    # their hardware provides, such as dedicated pins or EEPROM controls.
+    # Client code that wants the software path can call the module API from
+    # get_xcvr_api() directly.
     def get_reset_status(self) -> bool:
         """
         Retrieves the reset state of the CPO virtual module
@@ -118,6 +119,28 @@ class CpoBase(device_base.DeviceBase):
 
         Args:
             lpmode: A Boolean, True to enter low-power mode, False to leave it
+
+        Returns:
+            A boolean, True if successful, False if not
+        """
+        raise NotImplementedError
+
+    def get_tx_disable(self) -> list:
+        """
+        Retrieves the Tx-disable state of the CPO virtual module
+
+        Returns:
+            A list of Booleans, one per channel, True if the channel is
+            Tx-disabled, False if not
+        """
+        raise NotImplementedError
+
+    def tx_disable(self, tx_disable: bool) -> bool:
+        """
+        Disables or enables Tx on all channels of the CPO virtual module
+
+        Args:
+            tx_disable: A Boolean, True to disable Tx, False to enable it
 
         Returns:
             A boolean, True if successful, False if not

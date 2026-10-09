@@ -19,6 +19,12 @@ PLATFORM_HOOKS = [
     ("set_lpmode", (True,)),
 ]
 
+# Tx-disable is a hook of the CPO virtual module only.
+CPO_PLATFORM_HOOKS = PLATFORM_HOOKS + [
+    ("get_tx_disable", ()),
+    ("tx_disable", (True,)),
+]
+
 
 class TestOeBase(object):
     @pytest.mark.parametrize("method_name, args", PLATFORM_HOOKS)
@@ -105,7 +111,7 @@ class TestCpoBase(object):
         assert cpo.get_xcvr_api() is oe_api
         oe.get_api.assert_called_with()
 
-    @pytest.mark.parametrize("method_name, args", PLATFORM_HOOKS)
+    @pytest.mark.parametrize("method_name, args", CPO_PLATFORM_HOOKS)
     def test_platform_hooks_raise(self, method_name, args):
         hardware_id = CpoHardwareInfo(oe_id=SOME_OE_ID, elsfp_id=SOME_ELSFP_ID)
         oe, elsfp = OeBase(hardware_id), ElsfpBase(hardware_id)
