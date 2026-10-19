@@ -267,9 +267,9 @@ class BaillyElsfpApi(ElsfpApi):
         return result
 
     def get_per_lane_bias_current_monitor(self) -> dict:
-        # Legacy mA -> public single-monitor A; aggregate DOM uses mA again.
+        # Both legacy and public monitor values are mA.
         return self._per_laser_values(self.get_rlm_laser_current(), bailly.LASER_CURRENT_MONITOR,
-                                      elsfp_consts.BIAS_CURRENT_MONITOR_FIELD, lambda ma: ma / 1000.0)
+                                      elsfp_consts.BIAS_CURRENT_MONITOR_FIELD, lambda ma: ma)
 
     def get_per_lane_opt_power_monitor(self) -> dict:
         # Both legacy and public single-monitor values are mW.
@@ -298,7 +298,7 @@ class BaillyElsfpApi(ElsfpApi):
         dom = copy.deepcopy(ELSFP_BANKED_DOM_REAL_VALUE_DEFAULT_DICT)
         first_lane = self._get_first_lane_for_bank()
         for name, field, values, convert in (
-                ("laser_bias_current", elsfp_consts.BIAS_CURRENT_MONITOR_FIELD, bias_current, self.amps_to_ma),
+                ("laser_bias_current", elsfp_consts.BIAS_CURRENT_MONITOR_FIELD, bias_current, lambda ma: ma),
                 ("optical_power", elsfp_consts.OPT_POWER_MONITOR_FIELD, optical_power, self.mw_to_dbm),
                 ("voltage", elsfp_consts.VOLTAGE_MONITOR_FIELD, voltage, lambda volts: volts)):
             for index in range(len(values)):

@@ -132,7 +132,7 @@ class TestBaillyElsfpApi:
         power = api.get_per_lane_opt_power_monitor()
         voltage = api.get_per_lane_voltage_monitor()
         assert sorted(bias) == ["BiasCurrentMonitor%d" % lane for lane in range(1, 9)]
-        assert bias["BiasCurrentMonitor1"] == pytest.approx(0.25)
+        assert bias["BiasCurrentMonitor1"] == pytest.approx(250.0)
         assert power["OptPowerMonitor2"] == pytest.approx(70.01)
         assert voltage["VoltageMonitor8"] == pytest.approx(1.57)
 
@@ -269,7 +269,7 @@ class TestBaillyElsfpLegacyAdapters:
     @pytest.mark.parametrize("count", [8, 16])
     @pytest.mark.parametrize("raw_method, public_method, raw_key, public_key, factor", [
         ("get_rlm_laser_current", "get_per_lane_bias_current_monitor",
-         "Laser{}CurrentMonitor", "BiasCurrentMonitor", 0.001),
+         "Laser{}CurrentMonitor", "BiasCurrentMonitor", 1),
         ("get_rlm_laser_power", "get_per_lane_opt_power_monitor",
          "Laser{}OpticalPowerMonitor", "OptPowerMonitor", 1),
         ("get_rlm_laser_voltage", "get_per_lane_voltage_monitor",
