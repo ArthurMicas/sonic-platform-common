@@ -238,3 +238,107 @@ class TestBaillyElsfpSeparatedAggregates:
         eeprom.fail_reads = True
         assert getattr(api, method)() is None
         assert eeprom.writes == []
+
+
+class TestBaillyElsfpLegacyAdapters:
+    @pytest.mark.parametrize("failed", [False, True])
+    @pytest.mark.parametrize("method", [
+        "get_rlm_temperature", "get_rlm_vendor_info", "get_rlm_laser_current",
+        "get_rlm_laser_voltage", "get_rlm_laser_power", "get_rlm_monitor_values",
+        "get_rlm_thresholds", "get_rlm_flags", "get_rlm_status", "get_rlm_info",
+    ])
+    def test_raw_readers_match_legacy_api(self, api, eeprom, method, failed):
+        from sonic_platform_base.sonic_xcvr.api.broadcom.bailly import BaillyApi
+        from sonic_platform_base.sonic_xcvr.mem_maps.broadcom.bailly import BaillyMemMap
+
+        legacy_map = BaillyMemMap(BaillyCodes, base_page=BASE_PAGE)
+        legacy = BaillyApi(XcvrEeprom(eeprom.read, eeprom.write, legacy_map))
+        eeprom.put(CONTROL_PAGE, 131, "B", 0x03)
+        eeprom.put(CONTROL_PAGE, 137, "B", 0xA5)
+        eeprom.put(THRESHOLD_PAGE, 128, "B", 1)
+        eeprom.fail_reads = failed
+        assert getattr(api, method)() == getattr(legacy, method)()
+        assert eeprom.writes == []
+
+    def test_temperature_delegates_without_new_register_read(self, api):
+        with patch.object(api, "get_rlm_temperature", return_value=31.125) as legacy:
+            with patch.object(api.xcvr_eeprom, "read", side_effect=AssertionError("Extra hardware read")):
+                assert api.get_module_temperature() == 31.125
+        legacy.assert_called_once_with()
+
+    @pytest.mark.parametrize("count", [8, 16])
+    @pytest.mark.parametrize("raw_method, public_method, raw_key, public_key, factor", [
+        ("get_rlm_laser_current", "get_per_lane_bias_current_monitor",
+         "Laser{}CurrentMonitor", "BiasCurrentMonitor", 0.001),
+        ("get_rlm_laser_power", "get_per_lane_opt_power_monitor",
+         "Laser{}OpticalPowerMonitor", "OptPowerMonitor", 1),
+        ("get_rlm_laser_voltage", "get_per_lane_voltage_monitor",
+         "Laser{}VoltageMonitor", "VoltageMonitor", 1),
+    ])
+    def test_monitor_adapters_rename_and_convert(
+            self, api, count, raw_method, public_method, raw_key, public_key, factor):
+        raw = {raw_key.format(laser): 100 + laser for laser in range(16)}
+        with patch.object(api, raw_method, return_value=raw) as legacy:
+            with patch.object(api, "get_lane_count", return_value=count):
+                with patch.object(api.xcvr_eeprom, "read", side_effect=AssertionError("Extra hardware read")):
+                    values = getattr(api, public_method)()
+        assert values == pytest.approx({public_key + str(laser + 1): (100 + laser) * factor
+                                       for laser in range(count)})
+        assert len(raw) == 16
+        legacy.assert_called_once_with()
+
+    def test_module_values_adapt_legacy_dictionary(self, api):
+        raw = {"els_temperature": 26.5, "els_voltage": 3.2, "rlm_tec_current": 12.5}
+        with patch.object(api, "get_rlm_monitor_values", return_value=raw):
+            with patch.object(api.xcvr_eeprom, "read", side_effect=AssertionError("Extra hardware read")):
+                assert api.get_module_voltage() == 3.2
+                assert api.get_non_banked_elsfp_dom_real_value() == {
+                    "temperature": 26.5, "voltage": 3.2, "tec_current": 12.5,
+                }
+        assert raw == {"els_temperature": 26.5, "els_voltage": 3.2, "rlm_tec_current": 12.5}
+
+    def test_partial_raw_module_values_do_not_become_successful_dom(self, api):
+        from sonic_platform_base.sonic_xcvr.fields.broadcom import bailly
+
+        with patch.object(api.xcvr_eeprom, "read", return_value={bailly.MODULE_TEMPERATURE_MONITOR: 26.5}):
+            assert api.get_rlm_monitor_values() == {
+                "els_temperature": 26.5, "els_voltage": None, "rlm_tec_current": None,
+            }
+            assert api.get_non_banked_elsfp_dom_real_value() is None
+
+    @pytest.mark.parametrize("method, raw_method, result", [
+        ("get_per_lane_bias_current_monitor", "get_rlm_laser_current", {"Laser0CurrentMonitor": None}),
+        ("get_per_lane_opt_power_monitor", "get_rlm_laser_power", {}),
+        ("get_per_lane_voltage_monitor", "get_rlm_laser_voltage", None),
+        ("get_elsfp_threshold_info", "get_rlm_thresholds", {"els_temphighalarm": 75.0}),
+        ("get_non_banked_elsfp_dom_flags", "get_rlm_flags", {}),
+        ("get_module_state", "get_rlm_status", None),
+    ])
+    def test_incomplete_legacy_values_propagate_failure(self, api, method, raw_method, result):
+        with patch.object(api, raw_method, return_value=result):
+            with patch.object(api, "get_lane_count", return_value=8):
+                assert getattr(api, method)() is None
+
+    @pytest.mark.parametrize("control", [0, 1])
+    def test_info_wraps_legacy_and_preserves_control_readback(self, api, eeprom, control):
+        from sonic_platform_base.sonic_xcvr.fields.broadcom import bailly
+
+        eeprom.put(THRESHOLD_PAGE, 128, "B", control)
+        raw = api.get_rlm_info()
+        with patch.object(api, "get_rlm_info", return_value=raw) as legacy:
+            with patch.object(api.xcvr_eeprom, "read", side_effect=AssertionError("Extra hardware read")):
+                info = api.get_elsfp_info()
+        assert info["manufacturer"] == "BAILLY VENDOR"
+        assert info["lane_count"] == 8
+        assert info["rlm_laser_lpmode_control"] == raw["laser_power_mode"][bailly.LASER_POWER_MODE_CONTROL_BITS_FIELD]
+        assert eeprom.writes == []
+        legacy.assert_called_once_with()
+
+    def test_legacy_module_status_does_not_replace_laser_status(self, api, eeprom):
+        eeprom.put(CONTROL_PAGE, 133, "B", 0x01)
+        eeprom.put(CONTROL_PAGE, 135, "B", 0x02)
+        with patch.object(api, "get_rlm_status", return_value={
+                "els_module_low_power_state": "Unused", "els_interrupt_status": "Unused"}):
+            assert api.get_per_lane_enable()[:2] == [0, 1]
+            assert api.get_per_lane_state()["LaneState1"] == "Inactive"
+            assert api.get_per_lane_state()["LaneState2"] == "Active"
