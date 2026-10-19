@@ -267,9 +267,9 @@ class BaillyElsfpApi(ElsfpApi):
         return result
 
     def get_per_lane_bias_current_monitor(self) -> dict:
-        # Both legacy and public monitor values are mA.
+        # Legacy mA -> public monitor A; DOM/display converts A to mA.
         return self._per_laser_values(self.get_rlm_laser_current(), bailly.LASER_CURRENT_MONITOR,
-                                      elsfp_consts.BIAS_CURRENT_MONITOR_FIELD, lambda ma: ma)
+                                      elsfp_consts.BIAS_CURRENT_MONITOR_FIELD, lambda ma: ma / 1000.0)
 
     def get_per_lane_opt_power_monitor(self) -> dict:
         # Both legacy and public single-monitor values are mW.
@@ -298,13 +298,44 @@ class BaillyElsfpApi(ElsfpApi):
         dom = copy.deepcopy(ELSFP_BANKED_DOM_REAL_VALUE_DEFAULT_DICT)
         first_lane = self._get_first_lane_for_bank()
         for name, field, values, convert in (
-                ("laser_bias_current", elsfp_consts.BIAS_CURRENT_MONITOR_FIELD, bias_current, lambda ma: ma),
+                ("laser_bias_current", elsfp_consts.BIAS_CURRENT_MONITOR_FIELD, bias_current, self.amps_to_ma),
                 ("optical_power", elsfp_consts.OPT_POWER_MONITOR_FIELD, optical_power, self.mw_to_dbm),
                 ("voltage", elsfp_consts.VOLTAGE_MONITOR_FIELD, voltage, lambda volts: volts)):
             for index in range(len(values)):
                 value = convert(values["%s%d" % (field, index + 1)])
                 dom["%s_lane%d" % (name, first_lane + index)] = float("{:.3f}".format(value))
         return dom
+
+    def _get_rlm_threshold(self, name):
+        values = self.get_rlm_thresholds()
+        return values.get(name) if values is not None else None
+
+    def get_laser_bias_high_alarm(self) -> float:
+        # The public threshold API returns A; legacy RLM thresholds use mA.
+        value = self._get_rlm_threshold("els_txbiashighalarm")
+        return value / 1000.0 if value is not None else None
+
+    def get_laser_bias_high_warn(self) -> float:
+        value = self._get_rlm_threshold("els_txbiashighwarning")
+        return value / 1000.0 if value is not None else None
+
+    def get_laser_bias_low_alarm(self) -> float:
+        raise NotImplementedError("Bailly RLM does not report a low bias alarm threshold")
+
+    def get_laser_bias_low_warn(self) -> float:
+        raise NotImplementedError("Bailly RLM does not report a low bias warning threshold")
+
+    def get_optical_power_high_alarm(self) -> float:
+        return self._get_rlm_threshold("els_txpowerhighalarm")
+
+    def get_optical_power_low_alarm(self) -> float:
+        return self._get_rlm_threshold("els_txpowerlowalarm")
+
+    def get_optical_power_high_warn(self) -> float:
+        return self._get_rlm_threshold("els_txpowerhighwarning")
+
+    def get_optical_power_low_warn(self) -> float:
+        return self._get_rlm_threshold("els_txpowerlowwarning")
 
     def get_elsfp_threshold_info(self) -> dict:
         values = self.get_rlm_thresholds()
@@ -361,6 +392,9 @@ class BaillyElsfpApi(ElsfpApi):
         if power_mode == codes.POWER_MODE[0]:
             return MODULE_STATE_READY
         return "Unknown"
+
+    def get_module_fault_cause(self) -> str:
+        raise NotImplementedError("Bailly RLM does not report an ELS module fault cause")
 
     def get_module_state(self) -> str:
         # This adapts power-mode readback, not a complete ELS state machine.

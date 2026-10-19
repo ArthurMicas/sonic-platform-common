@@ -435,11 +435,8 @@ class ElsfpApi(XcvrApi):
     ###############################################################
 
     def get_per_lane_bias_current_monitor(self) -> dict[str, float]:
-        # EEPROM fields decode in A; expose monitor values in mA, like DOM.
-        values = self.xcvr_eeprom.read(elsfp_consts.BIAS_CURRENT_MONITOR_FIELD)
-        if values is None:
-            return None
-        return {lane: self.amps_to_ma(value) for lane, value in values.items()}
+        # Returns per-lane bias current monitor in A (raw register in 100 uA steps, scaled by 1/10000)
+        return self.xcvr_eeprom.read(elsfp_consts.BIAS_CURRENT_MONITOR_FIELD)
 
     def get_per_lane_opt_power_monitor(self) -> dict[str, float]:
         # Returns per-lane optical power monitor in mW (raw register in 10 uW steps, scaled by 1/100)
@@ -630,7 +627,7 @@ class ElsfpApi(XcvrApi):
         # match the units that their associated thresholds are reported in.
         first_lane = self._get_first_lane_for_bank()
         for name, field, values, convert in (
-                ("laser_bias_current", elsfp_consts.BIAS_CURRENT_MONITOR_FIELD, bias_current, lambda ma: ma),
+                ("laser_bias_current", elsfp_consts.BIAS_CURRENT_MONITOR_FIELD, bias_current, self.amps_to_ma),
                 ("optical_power", elsfp_consts.OPT_POWER_MONITOR_FIELD, optical_power, self.mw_to_dbm),
                 ("voltage", elsfp_consts.VOLTAGE_MONITOR_FIELD, voltage, lambda volts: volts)):
             for index in range(len(values)):

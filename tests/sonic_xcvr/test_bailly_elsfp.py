@@ -132,7 +132,7 @@ class TestBaillyElsfpApi:
         power = api.get_per_lane_opt_power_monitor()
         voltage = api.get_per_lane_voltage_monitor()
         assert sorted(bias) == ["BiasCurrentMonitor%d" % lane for lane in range(1, 9)]
-        assert bias["BiasCurrentMonitor1"] == pytest.approx(250.0)
+        assert bias["BiasCurrentMonitor1"] == pytest.approx(0.25)
         assert power["OptPowerMonitor2"] == pytest.approx(70.01)
         assert voltage["VoltageMonitor8"] == pytest.approx(1.57)
 
@@ -269,7 +269,7 @@ class TestBaillyElsfpLegacyAdapters:
     @pytest.mark.parametrize("count", [8, 16])
     @pytest.mark.parametrize("raw_method, public_method, raw_key, public_key, factor", [
         ("get_rlm_laser_current", "get_per_lane_bias_current_monitor",
-         "Laser{}CurrentMonitor", "BiasCurrentMonitor", 1),
+         "Laser{}CurrentMonitor", "BiasCurrentMonitor", 0.001),
         ("get_rlm_laser_power", "get_per_lane_opt_power_monitor",
          "Laser{}OpticalPowerMonitor", "OptPowerMonitor", 1),
         ("get_rlm_laser_voltage", "get_per_lane_voltage_monitor",
@@ -342,3 +342,37 @@ class TestBaillyElsfpLegacyAdapters:
             assert api.get_per_lane_enable()[:2] == [0, 1]
             assert api.get_per_lane_state()["LaneState1"] == "Inactive"
             assert api.get_per_lane_state()["LaneState2"] == "Active"
+
+
+class TestBaillyElsfpThresholdAdapters:
+    @pytest.mark.parametrize("method, expected", [
+        ("get_laser_bias_high_alarm", 0.4),
+        ("get_laser_bias_high_warn", 0.35),
+        ("get_optical_power_high_alarm", 200.0),
+        ("get_optical_power_low_alarm", 0.0),
+        ("get_optical_power_high_warn", 150.0),
+        ("get_optical_power_low_warn", 1.0),
+    ])
+    def test_leaf_threshold_reads_use_legacy_rlm_values(self, api, method, expected):
+        assert getattr(api, method)() == pytest.approx(expected)
+
+    @pytest.mark.parametrize("method", [
+        "get_laser_bias_high_alarm", "get_laser_bias_high_warn",
+        "get_optical_power_high_alarm", "get_optical_power_low_alarm",
+        "get_optical_power_high_warn", "get_optical_power_low_warn",
+    ])
+    @pytest.mark.parametrize("raw", [None, {}])
+    def test_missing_threshold_values_propagate_failure(self, api, method, raw):
+        with patch.object(api, "get_rlm_thresholds", return_value=raw) as legacy:
+            with patch.object(api.xcvr_eeprom, "read", side_effect=AssertionError("Extra EEPROM read")):
+                assert getattr(api, method)() is None
+        legacy.assert_called_once_with()
+
+    @pytest.mark.parametrize("method", [
+        "get_laser_bias_low_alarm", "get_laser_bias_low_warn", "get_module_fault_cause",
+    ])
+    def test_unavailable_values_report_not_implemented_without_access(self, api, eeprom, method):
+        with patch.object(api.xcvr_eeprom, "read", side_effect=AssertionError("Unsupported EEPROM read")):
+            with pytest.raises(NotImplementedError):
+                getattr(api, method)()
+        assert eeprom.writes == []
