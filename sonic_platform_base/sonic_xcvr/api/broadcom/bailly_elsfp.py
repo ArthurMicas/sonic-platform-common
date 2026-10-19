@@ -92,6 +92,7 @@ class BaillyElsfpApi(ElsfpApi):
             "vendor_oui": vendor_info[bailly.VENDOR_OUI_HEX_FIELD],
             "vendor_rev": vendor_info[bailly.VENDOR_REVISION_ASCII_FIELD].rstrip(),
             "lane_count": lane_count,
+            "laser_wavelength_grid": cpo_info[bailly.LASER_WAVELENGTH_GRID],
         })
         return info
 
@@ -134,6 +135,18 @@ class BaillyElsfpApi(ElsfpApi):
                                       elsfp_consts.VOLTAGE_MONITOR_FIELD,
                                       lambda volts: volts)
 
+    def get_non_banked_elsfp_dom_real_value(self) -> dict:
+        # Read the RLM monitor group; the OE's lower CMIS memory is not ELS DOM.
+        monitors = self.xcvr_eeprom.read(bailly.CPO_MODULE_MONITORS_FIELD)
+        if monitors is None:
+            return None
+        temperature = self._format_float(monitors.get(bailly.MODULE_TEMPERATURE_MONITOR))
+        voltage = self._format_float(monitors.get(bailly.MODULE_SUPPLY_VOLTAGE_MONITOR))
+        if temperature is None or voltage is None:
+            return None
+        return {"temperature": temperature, "voltage": voltage,
+                "tec_current": self._format_float(monitors.get(bailly.TEC_CURRENT_MONITOR))}
+
     def get_banked_elsfp_dom_real_value(self) -> dict:
         bias_current = self.get_per_lane_bias_current_monitor()
         optical_power = self.get_per_lane_opt_power_monitor()
@@ -152,6 +165,29 @@ class BaillyElsfpApi(ElsfpApi):
                 value = convert(values["%s%d" % (field, index + 1)])
                 dom["%s_lane%d" % (name, first_lane + index)] = float("{:.3f}".format(value))
         return dom
+
+    def get_non_banked_elsfp_dom_flags(self) -> dict:
+        alarms = self.xcvr_eeprom.read(bailly.MODULE_ALARMS_FIELD)
+        if alarms is None:
+            return None
+        fields = {
+            "temperature_alarm_high": bailly.TEMP_HIGH_ALARM_FLAG,
+            "temperature_alarm_low": bailly.TEMP_LOW_ALARM_FLAG,
+            "temperature_warn_high": bailly.TEMP_HIGH_WARN_FLAG,
+            "temperature_warn_low": bailly.TEMP_LOW_WARN_FLAG,
+            "voltage_alarm_high": bailly.VOLTAGE_HIGH_ALARM_FLAG,
+            "voltage_alarm_low": bailly.VOLTAGE_LOW_ALARM_FLAG,
+            "voltage_warn_high": bailly.VOLTAGE_HIGH_WARN_FLAG,
+            "voltage_warn_low": bailly.VOLTAGE_LOW_WARN_FLAG,
+        }
+        if any(alarms.get(field) is None for field in fields.values()):
+            return None
+        return {name: bool(alarms[field]) for name, field in fields.items()}
+
+    def get_banked_elsfp_dom_flags(self) -> dict:
+        # Expose only the existing module-level alarms. Per-laser alarm
+        # reporting requires hardware capability/bit-semantics verification.
+        return {}
 
     ###############################################################
     #                    Thresholds (Page B2h)                    #
@@ -198,8 +234,11 @@ class BaillyElsfpApi(ElsfpApi):
     ###############################################################
 
     def get_module_state(self) -> str:
-        # Bailly reports only its power mode; full power is reported as ready.
         status = self.xcvr_eeprom.read(bailly.LASER_STATUS_FIELD)
+        return self._module_state_from_status(status)
+
+    def _module_state_from_status(self, status):
+        # Bailly reports only its power mode; full power is reported as ready.
         if status is None:
             return None
         power_mode = status.get(bailly.MODULE_LOW_POWER_STATE)
@@ -248,10 +287,12 @@ class BaillyElsfpApi(ElsfpApi):
         }
 
     def get_non_banked_elsfp_status(self) -> dict:
-        module_state = self.get_module_state()
-        if module_state is None:
+        status = self.xcvr_eeprom.read(bailly.LASER_STATUS_FIELD)
+        module_state = self._module_state_from_status(status)
+        if module_state is None or status is None:
             return None
-        return {"module_state": module_state}
+        return {"module_state": module_state,
+                "interrupt_status": status.get(bailly.INTL_INTERRUPT_STATUS)}
 
     def get_banked_elsfp_status(self) -> dict:
         lane_enable = self.get_per_lane_enable()
@@ -267,3 +308,14 @@ class BaillyElsfpApi(ElsfpApi):
             status["state_lane%d" % (first_lane + index)] = \
                 lane_state["%s%d" % (elsfp_consts.LANE_STATE_FIELD, index + 1)]
         return status
+
+    def get_non_banked_elsfp_status_flags(self) -> dict:
+        flags = self.get_non_banked_elsfp_dom_flags()
+        status = self.xcvr_eeprom.read(bailly.LASER_STATUS_FIELD)
+        if flags is None or status is None:
+            return None
+        flags["interrupt_status"] = status.get(bailly.INTL_INTERRUPT_STATUS)
+        return flags
+
+    def get_banked_elsfp_status_flags(self) -> dict:
+        return self.get_banked_elsfp_dom_flags()

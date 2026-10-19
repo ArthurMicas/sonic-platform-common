@@ -2,6 +2,7 @@ import math
 import struct
 
 import pytest
+from unittest.mock import patch
 
 from sonic_platform_base.sonic_xcvr.api.broadcom.bailly_elsfp import BaillyElsfpApi
 from sonic_platform_base.sonic_xcvr.api.public.elsfp import ElsfpApi
@@ -196,4 +197,44 @@ class TestBaillyElsfpApi:
     def test_controls_are_not_supported(self, api, eeprom, control):
         with pytest.raises(NotImplementedError):
             control(api)
+        assert eeprom.writes == []
+
+
+class TestBaillyElsfpSeparatedAggregates:
+    def test_dom_has_rlm_tec_current_and_wavelength(self, api, eeprom):
+        eeprom.put(CONTROL_PAGE, 250, ">h", 32767)
+        assert api.get_elsfp_dom_real_value()["tec_current"] == 100.0
+        assert api.get_elsfp_info()["laser_wavelength_grid"] == "DR4"
+
+    @pytest.mark.parametrize("mask", [0, 0x55, 0xAA, 0xFF])
+    def test_module_flags_read_rlm_not_oe_lower_memory(self, api, eeprom, mask):
+        eeprom.put(0, 9, "B", (~mask) & 0xFF)
+        eeprom.put(CONTROL_PAGE, 137, "B", mask)
+        flags = api.get_non_banked_elsfp_dom_flags()
+        names = ["temperature_alarm_high", "temperature_alarm_low", "temperature_warn_high", "temperature_warn_low",
+                 "voltage_alarm_high", "voltage_alarm_low", "voltage_warn_high", "voltage_warn_low"]
+        assert flags == {name: bool(mask & (1 << bit)) for bit, name in enumerate(names)}
+
+    def test_flags_do_not_expose_unverified_per_laser_bits(self, api, eeprom):
+        eeprom.put(CONTROL_PAGE, 138, "4B", 0xFF, 0xFF, 0xFF, 0xFF)
+        with patch.object(api, "get_lane_count", side_effect=AssertionError("Per-laser alarms requested")):
+            for method in (api.get_elsfp_dom_flags, api.get_elsfp_status_flags):
+                flags = method()
+                assert flags["temperature_alarm_high"] is False
+                assert not any("_lane" in key for key in flags)
+            assert api.get_banked_elsfp_dom_flags() == {}
+            assert api.get_banked_elsfp_status_flags() == {}
+
+    def test_interrupt_is_reported_by_els_status_and_flags(self, api, eeprom):
+        eeprom.put(CONTROL_PAGE, 131, "B", 0x01)
+        assert api.get_elsfp_status()["interrupt_status"] == "Interrupt event cleared"
+        flags = api.get_elsfp_status_flags()
+        assert flags["interrupt_status"] == "Interrupt event cleared"
+        assert flags["temperature_alarm_high"] is False
+
+    @pytest.mark.parametrize("method", ["get_non_banked_elsfp_dom_real_value", "get_elsfp_dom_flags",
+                                        "get_elsfp_status_flags"])
+    def test_new_aggregates_propagate_read_failure(self, api, eeprom, method):
+        eeprom.fail_reads = True
+        assert getattr(api, method)() is None
         assert eeprom.writes == []
