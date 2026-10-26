@@ -25,8 +25,8 @@ def endpoints():
     oe = OeApiFactory(device).create_api()
     device.bank = 0
     els = ElsfpApiFactory(device).create_api()
-    # CMIS construction reads byte 2; ELS creation must not probe OE memory.
-    assert reader.call_args_list == [call(2, 1)]
+    # CMIS reads byte 2; automatic ELS identification reads vendor and part number.
+    assert reader.call_args_list == [call(2, 1), call(129, 16), call(148, 16)]
     reader.reset_mock()
     return data, reader, writer, oe, els
 
